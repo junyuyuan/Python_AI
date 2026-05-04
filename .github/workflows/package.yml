@@ -11,7 +11,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -26,6 +26,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: 使用 PyInstaller 打包为 EXE
+        shell: pwsh
         run: |
           pyinstaller --onefile --name "HelloWorld" hello_world.py
 
@@ -33,4 +34,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: HelloWorld-EXE
-          path: dist/HelloWorld.exe
+          path: dist\HelloWorld.exe
