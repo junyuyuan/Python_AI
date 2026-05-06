@@ -5,7 +5,7 @@ import threading
 import eve_auth
 
 # 请在 https://developers.eveonline.com 注册应用后填入你的 Client ID
-EVE_CLIENT_ID = ""
+EVE_CLIENT_ID = "9905be5356d7420caf87bdd8b639f6f4"
 
 
 class App:
