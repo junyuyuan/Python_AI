@@ -78,10 +78,11 @@ class App:
         try:
             self.char_info = eve_auth.login(EVE_CLIENT_ID)
             self.root.after(0, self._build_ui)
-        except RuntimeError as e:
-            self.root.after(0, lambda: self._show_error(str(e)))
         except Exception as e:
-            self.root.after(0, lambda: self._show_error(f"登录失败: {e}"))
+            import traceback
+            with open("login_error.log", "w", encoding="utf-8") as f:
+                f.write(traceback.format_exc())
+            self.root.after(0, lambda: self._show_error(f"登录失败: {type(e).__name__}: {e}"))
 
     def _show_error(self, msg):
         self.status_label.config(text=msg, foreground="red")
