@@ -129,23 +129,27 @@ def login(client_id, redirect_port=DEFAULT_REDIRECT_PORT, scopes=None):
     access_token = token_json["access_token"]
     refresh_token = token_json.get("refresh_token")
 
-    # Verify token and get character info
-    verify_resp = requests.get(
-        EVE_VERIFY_URL,
-        headers={"Authorization": f"Bearer {access_token}"},
-    )
+    # Decode JWT payload to get character info
     try:
-        verify_resp.raise_for_status()
+        payload_b64 = access_token.split(".")[1]
+        padding = 4 - len(payload_b64) % 4
+        if padding != 4:
+            payload_b64 += "=" * padding
+        payload_json = base64.urlsafe_b64decode(payload_b64)
+        char_info = json.loads(payload_json)
     except Exception as e:
-        raise RuntimeError(f"Verify request failed ({verify_resp.status_code}): {verify_resp.text}") from e
-    char_info = verify_resp.json()
+        raise RuntimeError(f"Failed to decode access token: {e}") from e
+
+    # sub format: "CHARACTER:EVE:<character_id>"
+    sub = char_info.get("sub", "")
+    character_id = sub.split(":")[-1] if ":" in sub else sub
 
     return {
-        "character_id": char_info.get("CharacterID"),
-        "character_name": char_info.get("CharacterName"),
+        "character_id": character_id,
+        "character_name": char_info.get("name"),
         "access_token": access_token,
         "refresh_token": refresh_token,
-        "expires_on": char_info.get("ExpiresOn"),
+        "expires_on": char_info.get("exp"),
     }
 
 
