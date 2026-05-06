@@ -120,7 +120,10 @@ def login(client_id, redirect_port=DEFAULT_REDIRECT_PORT, scopes=None):
         data=token_data,
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except Exception as e:
+        raise RuntimeError(f"Token request failed ({resp.status_code}): {resp.text}") from e
     token_json = resp.json()
 
     access_token = token_json["access_token"]
@@ -131,7 +134,10 @@ def login(client_id, redirect_port=DEFAULT_REDIRECT_PORT, scopes=None):
         EVE_VERIFY_URL,
         headers={"Authorization": f"Bearer {access_token}"},
     )
-    verify_resp.raise_for_status()
+    try:
+        verify_resp.raise_for_status()
+    except Exception as e:
+        raise RuntimeError(f"Verify request failed ({verify_resp.status_code}): {verify_resp.text}") from e
     char_info = verify_resp.json()
 
     return {
