@@ -31,10 +31,10 @@ jobs:
       - name: 使用 PyInstaller 打包为 EXE
         shell: pwsh
         run: |
-          pyinstaller --onefile --name "HelloWorld" hello_world.py
+          pyinstaller --onefile --name "Main" main.py
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: HelloWorld-EXE
-          path: dist\HelloWorld.exe
+          name: Main-EXE
+          path: dist\Main.exe

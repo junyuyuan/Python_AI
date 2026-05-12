@@ -65,7 +65,7 @@ class App:
         if not EVE_CLIENT_ID:
             messagebox.showerror(
                 "未配置 Client ID",
-                "请先在 hello_world.py 中设置 EVE_CLIENT_ID\n"
+                "请先在 main.py 中设置 EVE_CLIENT_ID\n"
                 "获取地址: https://developers.eveonline.com",
             )
             return
