@@ -36,7 +36,6 @@ ALL_SCOPES = [
     "esi-markets.read_character_orders.v1",
     "esi-industry.read_character_jobs.v1",
     "esi-industry.read_character_mining.v1",
-    "esi-characterstats.read.v1",
     "esi-characters.read_blueprints.v1",
     "esi-characters.read_fw_stats.v1",
     "esi-characters.read_loyalty.v1",
