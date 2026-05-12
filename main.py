@@ -16,18 +16,21 @@ class App:
     def __init__(self, root):
         self.root = root
         self.root.title("Python_AI")
-        self.root.geometry("900x650")
+        self.root.geometry("400x250")
         self.root.resizable(True, True)
 
         self.char_info = None
         self.all_data = None
         self.notebook = None
-        self.status_var = tk.StringVar(value="")
         self.tab_frames = {}
 
         self._build_login_ui()
 
     # ── Login UI ──────────────────────────────────────────────
+
+    def _clear_root(self):
+        for w in self.root.winfo_children():
+            w.destroy()
 
     def _build_login_ui(self):
         self._clear_root()
@@ -62,19 +65,97 @@ class App:
             self.root.after(0, lambda: self.status_label.config(
                 text=f"登录失败: {type(e).__name__}: {e}", foreground="red"))
 
+    # ── Loading UI (login success → fetch data → show tabs) ────
+
     def _on_login_success(self):
-        self.root.geometry("900x650")
-        self._build_main_ui()
-        self.status_var.set("正在加载全部角色数据...")
+        self._clear_root()
+        self.root.geometry("500x150")
+        self.root.resizable(False, False)
+
+        frame = ttk.Frame(self.root, padding=30)
+        frame.pack(expand=True, fill=tk.BOTH)
+
+        self.loading_label = ttk.Label(frame, text=f"登录成功，欢迎 {self.char_info['character_name']}！",
+                                       font=("Microsoft YaHei", 12, "bold"))
+        self.loading_label.pack(pady=(0, 10))
+
+        self.progress = ttk.Progressbar(frame, mode="determinate", length=400)
+        self.progress.pack(pady=(0, 8))
+
+        self.progress_label = ttk.Label(frame, text="正在连接 ESI...", font=("Microsoft YaHei", 9))
+        self.progress_label.pack()
+
+        self.root.update()
         threading.Thread(target=self._fetch_all_data, daemon=True).start()
 
-    # ── Main UI ───────────────────────────────────────────────
+    def _fetch_all_data(self):
+        token = self.char_info["access_token"]
+        cid = self.char_info["character_id"]
 
-    def _clear_root(self):
-        for w in self.root.winfo_children():
-            w.destroy()
+        # (category, endpoint_path) — must match tab categories
+        endpoints = [
+            ("info", f"/characters/{cid}/"),
+            ("online", f"/characters/{cid}/online/"),
+            ("corp_history", f"/characters/{cid}/corporationhistory/"),
+            ("attributes", f"/characters/{cid}/attributes/"),
+            ("skills", f"/characters/{cid}/skills/"),
+            ("skillqueue", f"/characters/{cid}/skillqueue/"),
+            ("wallet", f"/characters/{cid}/wallet/"),
+            ("wallet_journal", f"/characters/{cid}/wallet/journal/"),
+            ("wallet_transactions", f"/characters/{cid}/wallet/transactions/"),
+            ("assets", f"/characters/{cid}/assets/"),
+            ("location", f"/characters/{cid}/location/"),
+            ("ship", f"/characters/{cid}/ship/"),
+            ("fittings", f"/characters/{cid}/fittings/"),
+            ("clones", f"/characters/{cid}/clones/"),
+            ("implants", f"/characters/{cid}/implants/"),
+            ("fatigue", f"/characters/{cid}/fatigue/"),
+            ("mail", f"/characters/{cid}/mail/"),
+            ("mail_labels", f"/characters/{cid}/mail/labels/"),
+            ("notifications", f"/characters/{cid}/notifications/"),
+            ("contacts", f"/characters/{cid}/contacts/"),
+            ("standings", f"/characters/{cid}/standings/"),
+            ("killmails", f"/characters/{cid}/killmails/recent/"),
+            ("contracts", f"/characters/{cid}/contracts/"),
+            ("orders", f"/characters/{cid}/orders/"),
+            ("industry_jobs", f"/characters/{cid}/industry/jobs/"),
+            ("blueprints", f"/characters/{cid}/blueprints/"),
+            ("fw_stats", f"/characters/{cid}/fw/stats/"),
+            ("loyalty", f"/characters/{cid}/loyalty/points/"),
+            ("medals", f"/characters/{cid}/medals/"),
+            ("mining", f"/characters/{cid}/mining/"),
+            ("planets", f"/characters/{cid}/planets/"),
+            ("titles", f"/characters/{cid}/titles/"),
+            ("roles", f"/characters/{cid}/roles/"),
+            ("calendar", f"/characters/{cid}/calendar/"),
+        ]
 
-    def _build_main_ui(self):
+        total = len(endpoints)
+        results = {}
+        ok_count = 0
+
+        for i, (key, path) in enumerate(endpoints):
+            # Update UI progress
+            def _update():
+                pct = (i + 1) / total * 100
+                self.progress["value"] = pct
+                self.progress_label.config(text=f"正在获取 {key}... ({i + 1}/{total})")
+            self.root.after(0, _update)
+
+            try:
+                results[key] = eve_auth.esi_get(token, path)
+                ok_count += 1
+            except Exception:
+                results[key] = None
+
+        self.all_data = results
+        self.root.after(0, lambda: self._show_tab_ui(total, ok_count))
+
+    # ── Main tabbed UI ────────────────────────────────────────
+
+    def _show_tab_ui(self, total, ok_count):
+        self.root.resizable(True, True)
+        self.root.geometry("900x650")
         self._clear_root()
 
         header = ttk.Frame(self.root, padding=(10, 8))
@@ -90,11 +171,13 @@ class App:
             frame = ttk.Frame(self.notebook)
             self.notebook.add(frame, text=cat)
             self.tab_frames[cat] = frame
-            ttk.Label(frame, text="加载中...", foreground="gray").pack(expand=True)
 
-        status_bar = ttk.Frame(self.root, padding=(10, 4))
-        status_bar.pack(fill=tk.X)
-        ttk.Label(status_bar, textvariable=self.status_var, foreground="gray").pack(side=tk.LEFT)
+        statbar = ttk.Frame(self.root, padding=(10, 4))
+        statbar.pack(fill=tk.X)
+        ttk.Label(statbar, text=f"数据加载完成 ({ok_count}/{total} 个端点成功)",
+                  foreground="gray").pack(side=tk.LEFT)
+
+        self._populate_tabs()
 
     def _logout(self):
         self.char_info = None
@@ -102,15 +185,9 @@ class App:
         self.tab_frames = {}
         self._build_login_ui()
 
-    # ── Data fetching ─────────────────────────────────────────
-
-    def _fetch_all_data(self):
-        self.all_data = eve_auth.fetch_all_character_data(self.char_info)
-        self.root.after(0, self._populate_tabs)
+    # ── Populate tabs ─────────────────────────────────────────
 
     def _populate_tabs(self):
-        if not self.all_data:
-            return
         d = self.all_data
         cid = self.char_info["character_id"]
 
@@ -127,13 +204,9 @@ class App:
         self._tab_contacts(d)
         self._tab_corp(d)
 
-        ok = sum(1 for v in d.values() if v is not None)
-        self.status_var.set(f"数据加载完成 ({ok}/{len(d)} 个端点成功)")
-
     # ── Helper widgets ────────────────────────────────────────
 
     def _make_tree(self, parent, columns, col_widths=None, height=15):
-        """Create a Treeview with scrollbar inside a frame."""
         f = ttk.Frame(parent)
         f.pack(expand=True, fill=tk.BOTH)
         tree = ttk.Treeview(f, columns=columns, show="headings", height=height)
@@ -160,13 +233,13 @@ class App:
     def _tab_overview(self, d, cid):
         frame = self.tab_frames["概览"]
         self._clear_frame(frame)
-        info = d.get("基本信息")
-        online = d.get("在线状态")
-        corp_hist = d.get("军团历史")
-        standings = d.get("声望")
-        fw = d.get("势力战争")
-        loyalty = d.get("忠诚点数")
-        fatigue = d.get("跳跃疲劳")
+        info = d.get("info")
+        online = d.get("online")
+        corp_hist = d.get("corp_history")
+        standings = d.get("standings")
+        fw = d.get("fw_stats")
+        loyalty = d.get("loyalty")
+        fatigue = d.get("fatigue")
 
         if not info:
             self._show_nodata(frame)
@@ -181,14 +254,16 @@ class App:
         w(f"角色名: {info.get('name', 'N/A')}")
         w(f"Character ID: {cid}")
         w(f"生日: {info.get('birthday', 'N/A')}")
-        w(f"性别: {info.get('gender', 'N/A')}")
         w(f"安全等级: {info.get('security_status', 'N/A')}")
-        w(f"种族: {info.get('race_id', 'N/A')}")
-        w(f"血统: {info.get('bloodline_id', 'N/A')}")
+        w(f"性别: {info.get('gender', 'N/A')}")
+        w(f"种族ID: {info.get('race_id', 'N/A')}")
+        w(f"血统ID: {info.get('bloodline_id', 'N/A')}")
         w(f"军团ID: {info.get('corporation_id', 'N/A')}")
         w(f"联盟ID: {info.get('alliance_id', 'N/A')}")
         w(f"派系ID: {info.get('faction_id', 'N/A')}")
-        w(f"描述: {info.get('description', '')}")
+        desc = info.get('description', '')
+        if desc:
+            w(f"描述: {desc}")
         w("")
 
         if online:
@@ -200,7 +275,7 @@ class App:
 
         if fatigue:
             w("[跳跃疲劳]")
-            w(f"  跳跃疲劳值: {fatigue.get('jump_fatigue_expire_date', 'N/A')}")
+            w(f"  疲劳到期: {fatigue.get('jump_fatigue_expire_date', 'N/A')}")
             w(f"  上次跳跃: {fatigue.get('last_jump_date', 'N/A')}")
             w(f"  上次更新: {fatigue.get('last_update_date', 'N/A')}")
             w("")
@@ -208,22 +283,21 @@ class App:
         if corp_hist:
             w("[军团历史]")
             for entry in corp_hist[:10]:
-                w(f"  军团ID {entry.get('corporation_id')}  开始: {entry.get('start_date')}  (记录ID: {entry.get('record_id')})")
+                w(f"  军团ID {entry.get('corporation_id')}  开始: {entry.get('start_date')}  记录ID: {entry.get('record_id')}")
             w("")
 
         if standings:
             w("[声望]")
             for s in standings[:20]:
-                w(f"  {s.get('from_type', 'N/A')} {s.get('from_id')} → 值: {s.get('standing')}")
+                w(f"  {s.get('from_type', '')} {s.get('from_id')} → 值: {s.get('standing')}")
             w("")
 
         if fw:
             w("[势力战争]")
             w(f"  派系ID: {fw.get('faction_id', 'N/A')}")
             w(f"  加入日期: {fw.get('enlisted_on', 'N/A')}")
-            if fw.get("victory_points"):
-                vp = fw["victory_points"]
-                w(f"  上周战绩: {vp.get('last_week', 'N/A')} | 总计: {vp.get('total', 'N/A')} | 昨日: {vp.get('yesterday', 'N/A')}")
+            vp = fw.get("victory_points", {}) or {}
+            w(f"  上周战绩: {vp.get('last_week', 'N/A')} | 总计: {vp.get('total', 'N/A')} | 昨日: {vp.get('yesterday', 'N/A')}")
             w("")
 
         if loyalty:
@@ -239,9 +313,9 @@ class App:
     def _tab_skills(self, d):
         frame = self.tab_frames["技能"]
         self._clear_frame(frame)
-        attrs = d.get("角色属性")
-        skills = d.get("技能列表")
-        queue = d.get("技能队列")
+        attrs = d.get("attributes")
+        skills = d.get("skills")
+        queue = d.get("skillqueue")
 
         if attrs:
             info = ttk.Frame(frame)
@@ -255,7 +329,6 @@ class App:
         paned = ttk.PanedWindow(frame, orient=tk.VERTICAL)
         paned.pack(expand=True, fill=tk.BOTH)
 
-        # Skills
         f1 = ttk.LabelFrame(paned, text="已训练技能")
         paned.add(f1, weight=1)
         if skills and skills.get("skills"):
@@ -265,7 +338,6 @@ class App:
         else:
             ttk.Label(f1, text="无数据", foreground="gray").pack(expand=True)
 
-        # Skill queue
         f2 = ttk.LabelFrame(paned, text="技能训练队列")
         paned.add(f2, weight=1)
         if queue:
@@ -283,9 +355,9 @@ class App:
     def _tab_wallet(self, d):
         frame = self.tab_frames["钱包"]
         self._clear_frame(frame)
-        balance = d.get("钱包余额")
-        journal = d.get("钱包流水")
-        transactions = d.get("钱包交易")
+        balance = d.get("wallet")
+        journal = d.get("wallet_journal")
+        transactions = d.get("wallet_transactions")
 
         if balance is not None:
             ttk.Label(frame, text=f"ISK 余额: {balance:,.2f}",
@@ -324,7 +396,7 @@ class App:
     def _tab_assets(self, d):
         frame = self.tab_frames["资产"]
         self._clear_frame(frame)
-        assets = d.get("资产列表")
+        assets = d.get("assets")
         if not assets:
             self._show_nodata(frame)
             return
@@ -340,9 +412,9 @@ class App:
     def _tab_ship(self, d):
         frame = self.tab_frames["舰船"]
         self._clear_frame(frame)
-        ship = d.get("当前舰船")
-        location = d.get("当前位置")
-        fittings = d.get("舰船装配")
+        ship = d.get("ship")
+        location = d.get("location")
+        fittings = d.get("fittings")
 
         if ship or location:
             text = tk.Text(frame, height=4, font=("Microsoft YaHei", 10), padx=10, pady=6)
@@ -361,16 +433,15 @@ class App:
         tree = self._make_tree(frame, ["装配ID", "名称", "舰船类型ID", "装备数"], [120, 200, 120, 60], height=15)
         for fit in fittings[:50]:
             items = fit.get("items", [])
-            tree.insert("", tk.END, values=(
-                fit.get("fitting_id"), fit.get("name"), fit.get("ship_type_id"), len(items)))
+            tree.insert("", tk.END, values=(fit.get("fitting_id"), fit.get("name"), fit.get("ship_type_id"), len(items)))
 
     # ── Tab 6: 克隆 ────────────────────────────────────────────
 
     def _tab_clones(self, d):
         frame = self.tab_frames["克隆"]
         self._clear_frame(frame)
-        clones = d.get("克隆状态")
-        implants = d.get("植入体")
+        clones = d.get("clones")
+        implants = d.get("implants")
 
         if clones:
             text = tk.Text(frame, height=6, font=("Microsoft YaHei", 10), padx=10, pady=6)
@@ -381,18 +452,15 @@ class App:
             text.insert(tk.END, f"最后空间站变更: {clones.get('last_station_change_date', 'N/A')}\n\n")
             text.insert(tk.END, "跳克隆列表:\n")
             for jc in clones.get("jump_clones", []):
-                text.insert(tk.END, f"  location_id={jc.get('location_id')}, "
-                                    f"name={jc.get('name', 'N/A')}, "
+                text.insert(tk.END, f"  location_id={jc.get('location_id')}, name={jc.get('name', 'N/A')}, "
                                     f"implants={jc.get('implants')}\n")
             text.config(state=tk.DISABLED)
 
         if implants:
             tree = self._make_tree(frame, ["植入体 type_id"], [150], height=10)
             for imp in implants:
-                if isinstance(imp, int):
-                    tree.insert("", tk.END, values=(imp,))
-                elif isinstance(imp, dict):
-                    tree.insert("", tk.END, values=(imp.get("type_id", imp),))
+                val = imp if isinstance(imp, int) else imp.get("type_id", imp)
+                tree.insert("", tk.END, values=(val,))
             tree.pack(expand=True, fill=tk.BOTH)
 
         if not clones and not implants:
@@ -403,8 +471,8 @@ class App:
     def _tab_mail(self, d):
         frame = self.tab_frames["邮件/通知"]
         self._clear_frame(frame)
-        mail = d.get("邮件")
-        notifications = d.get("通知")
+        mail = d.get("mail")
+        notifications = d.get("notifications")
 
         paned = ttk.PanedWindow(frame, orient=tk.VERTICAL)
         paned.pack(expand=True, fill=tk.BOTH)
@@ -437,9 +505,9 @@ class App:
     def _tab_market(self, d):
         frame = self.tab_frames["市场/工业"]
         self._clear_frame(frame)
-        orders = d.get("市场订单")
-        jobs = d.get("工业任务")
-        mining = d.get("采矿")
+        orders = d.get("orders")
+        jobs = d.get("industry_jobs")
+        mining = d.get("mining")
 
         paned = ttk.PanedWindow(frame, orient=tk.VERTICAL)
         paned.pack(expand=True, fill=tk.BOTH)
@@ -447,7 +515,7 @@ class App:
         f1 = ttk.LabelFrame(paned, text="市场订单")
         paned.add(f1, weight=1)
         if orders:
-            tree = self._make_tree(f1, ["订单ID", "类型ID", "数量", "单价", "剩余", "买入?", "位置ID"], [100, 100, 50, 100, 50, 50, 100], height=6)
+            tree = self._make_tree(f1, ["订单ID", "类型ID", "总量", "单价", "剩余", "买入?", "位置ID"], [100, 100, 50, 100, 50, 50, 100], height=6)
             for o in orders[:50]:
                 tree.insert("", tk.END, values=(
                     o.get("order_id"), o.get("type_id"), o.get("volume_total"),
@@ -482,8 +550,8 @@ class App:
     def _tab_contracts(self, d):
         frame = self.tab_frames["合同/蓝图"]
         self._clear_frame(frame)
-        contracts = d.get("合同")
-        blueprints = d.get("蓝图")
+        contracts = d.get("contracts")
+        blueprints = d.get("blueprints")
 
         paned = ttk.PanedWindow(frame, orient=tk.VERTICAL)
         paned.pack(expand=True, fill=tk.BOTH)
@@ -491,13 +559,13 @@ class App:
         f1 = ttk.LabelFrame(paned, text="合同")
         paned.add(f1, weight=1)
         if contracts:
-            tree = self._make_tree(f1, ["合同ID", "类型", "状态", "发出者", "接受者", "价格", "位置ID"],
-                                   [100, 70, 70, 70, 70, 100, 100], height=8)
+            tree = self._make_tree(f1, ["合同ID", "类型", "状态", "发起军团?", "接受者ID", "价格", "位置ID"],
+                                   [90, 70, 70, 70, 80, 100, 100], height=8)
             for c in contracts[:50]:
                 tree.insert("", tk.END, values=(
                     c.get("contract_id"), c.get("type"), c.get("status"),
                     "是" if c.get("issuer_corporation_id") else "否",
-                    "是" if c.get("acceptor_id") else "",
+                    c.get("acceptor_id", ""),
                     f"{c.get('price', 0):,.2f}", c.get("start_location_id")))
         else:
             ttk.Label(f1, text="无数据", foreground="gray").pack(expand=True)
@@ -519,23 +587,25 @@ class App:
     def _tab_killmails(self, d):
         frame = self.tab_frames["击杀记录"]
         self._clear_frame(frame)
-        kms = d.get("击杀记录")
+        kms = d.get("killmails")
         if not kms:
             self._show_nodata(frame)
             return
         tree = self._make_tree(frame, ["击杀ID", "击杀船ID", "击杀船名称", "总价值"], [120, 120, 120, 100], height=20)
         for km in kms[:50]:
+            victim = km.get("victim", {}) or {}
+            zkb = km.get("zkb", {}) or {}
             tree.insert("", tk.END, values=(
-                km.get("killmail_id"), km.get("victim", {}).get("ship_type_id"),
-                km.get("victim", {}).get("ship_name", ""),
-                f"{km.get('zkb', {}).get('totalValue', 0):,.2f}"))
+                km.get("killmail_id"), victim.get("ship_type_id"),
+                victim.get("ship_name", ""),
+                f"{zkb.get('totalValue', 0):,.2f}"))
 
     # ── Tab 11: 联系人 ─────────────────────────────────────────
 
     def _tab_contacts(self, d):
         frame = self.tab_frames["联系人"]
         self._clear_frame(frame)
-        contacts = d.get("联系人")
+        contacts = d.get("contacts")
         if not contacts:
             self._show_nodata(frame)
             return
@@ -552,16 +622,16 @@ class App:
     def _tab_corp(self, d):
         frame = self.tab_frames["军团"]
         self._clear_frame(frame)
-        titles = d.get("头衔")
-        roles = d.get("军团角色")
-        medals = d.get("勋章")
-        planets = d.get("行星开发")
-        calendar = d.get("日历")
+        titles = d.get("titles")
+        roles = d.get("roles")
+        medals = d.get("medals")
+        planets = d.get("planets")
+        calendar = d.get("calendar")
 
         paned = ttk.PanedWindow(frame, orient=tk.VERTICAL)
         paned.pack(expand=True, fill=tk.BOTH)
 
-        f1 = ttk.LabelFrame(paned, text="军团头衔")
+        f1 = ttk.LabelFrame(paned, text="头衔")
         paned.add(f1, weight=1)
         if titles:
             tree = self._make_tree(f1, ["头衔ID", "名称"], [150, 200], height=4)
@@ -570,7 +640,7 @@ class App:
         else:
             ttk.Label(f1, text="无数据", foreground="gray").pack(expand=True)
 
-        f2 = ttk.LabelFrame(paned, text="军团角色")
+        f2 = ttk.LabelFrame(paned, text="角色")
         paned.add(f2, weight=1)
         if roles:
             text = tk.Text(f2, height=4, font=("Microsoft YaHei", 10), padx=10, pady=6)
