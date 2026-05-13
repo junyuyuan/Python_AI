@@ -52,15 +52,12 @@ CACHE_SIZE = 20000
 
 
 def _data_dir():
-    """User-writable directory for the SDE database.
-    Uses %APPDATA%/Python_AI on Windows, ~/.python_ai elsewhere."""
-    if os.name == "nt":
-        base = os.environ.get("APPDATA", os.path.expanduser("~"))
-    else:
-        base = os.path.expanduser("~")
-    path = os.path.join(base, "Python_AI")
-    os.makedirs(path, exist_ok=True)
-    return path
+    """Directory where the program lives — DB goes alongside the EXE/script."""
+    import sys
+
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
 
 
 class SDE:
