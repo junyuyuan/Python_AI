@@ -31,7 +31,7 @@ jobs:
       - name: 使用 PyInstaller 打包为 EXE
         shell: pwsh
         run: |
-          pyinstaller --onefile --name "Main" main.py
+          pyinstaller --onefile --noconsole --name "Main" main.py
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
