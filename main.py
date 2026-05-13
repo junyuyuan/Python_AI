@@ -3,6 +3,7 @@ from tkinter import ttk, messagebox
 import threading
 
 import eve_auth
+import eve_sde
 
 EVE_CLIENT_ID = "9905be5356d7420caf87bdd8b639f6f4"
 
@@ -23,8 +24,10 @@ class App:
         self.all_data = None
         self.notebook = None
         self.tab_frames = {}
+        self.sde = None
 
         self._build_login_ui()
+        self._check_sde()
 
     # ── Login UI ──────────────────────────────────────────────
 
@@ -45,6 +48,12 @@ class App:
         self.status_label = ttk.Label(frame, text="", foreground="gray")
         self.status_label.pack()
 
+        # SDE status footer
+        self.sde_status_label = ttk.Label(
+            self.root, text="SDE: 检查中...", foreground="gray", font=("Microsoft YaHei", 8)
+        )
+        self.sde_status_label.pack(side=tk.BOTTOM, pady=(0, 4))
+
     def _start_login(self):
         if not EVE_CLIENT_ID:
             messagebox.showerror("未配置 Client ID",
@@ -53,6 +62,64 @@ class App:
 
         self.status_label.config(text="正在打开浏览器，请完成授权...")
         threading.Thread(target=self._do_login, daemon=True).start()
+
+    # ── SDE check & download ──────────────────────────────────
+
+    def _check_sde(self):
+        threading.Thread(target=self._do_sde_check, daemon=True).start()
+
+    def _do_sde_check(self):
+        try:
+            sde = eve_sde.SDE()
+            if sde.needs_download():
+                self.root.after(0, self._sde_start_download, sde)
+            else:
+                self.sde = sde
+                self.root.after(0, lambda: self.sde_status_label.config(
+                    text="SDE: 就绪", foreground="green"))
+        except Exception as e:
+            self.root.after(0, lambda: self.sde_status_label.config(
+                text=f"SDE: 初始化失败 ({e})", foreground="red"))
+
+    def _sde_start_download(self, sde):
+        win = tk.Toplevel(self.root)
+        win.title("下载 SDE 数据库")
+        win.geometry("400x120")
+        win.resizable(False, False)
+        win.transient(self.root)
+        win.grab_set()
+
+        ttk.Label(win, text="正在下载 EVE 静态数据库...",
+                  font=("Microsoft YaHei", 11, "bold")).pack(pady=(12, 6))
+        stage_label = ttk.Label(win, text="下载中...", font=("Microsoft YaHei", 9))
+        stage_label.pack()
+        progress = ttk.Progressbar(win, mode="determinate", length=350)
+        progress.pack(pady=(6, 10))
+
+        def on_progress(stage, pct):
+            stage_texts = {
+                "download": f"下载中... ({pct:.0f}%)",
+                "decompress": f"解压中... ({pct:.0f}%)",
+                "extract": f"提取表... ({pct:.0f}%)",
+                "done": "完成",
+            }
+            stage_label.config(text=stage_texts.get(stage, f"{stage}... ({pct:.0f}%)"))
+            progress["value"] = pct
+            if stage == "done":
+                win.destroy()
+
+        def _download():
+            try:
+                sde.download_and_build(on_progress)
+                self.sde = sde
+                self.root.after(0, lambda: self.sde_status_label.config(
+                    text="SDE: 就绪", foreground="green"))
+            except Exception as e:
+                self.root.after(0, lambda: self.sde_status_label.config(
+                    text=f"SDE: 下载失败，重启重试", foreground="red"))
+                self.root.after(0, win.destroy)
+
+        threading.Thread(target=_download, daemon=True).start()
 
     def _do_login(self):
         try:
@@ -133,6 +200,7 @@ class App:
         total = len(endpoints)
         results = {}
         ok_count = 0
+        failed = []
 
         for i, (key, path) in enumerate(endpoints):
             # Update UI progress
@@ -145,15 +213,16 @@ class App:
             try:
                 results[key] = eve_auth.esi_get(token, path)
                 ok_count += 1
-            except Exception:
+            except Exception as e:
                 results[key] = None
+                failed.append((key, str(e)))
 
         self.all_data = results
-        self.root.after(0, lambda: self._show_tab_ui(total, ok_count))
+        self.root.after(0, lambda: self._show_tab_ui(total, ok_count, failed))
 
     # ── Main tabbed UI ────────────────────────────────────────
 
-    def _show_tab_ui(self, total, ok_count):
+    def _show_tab_ui(self, total, ok_count, failed=None):
         self.root.resizable(True, True)
         self.root.geometry("900x650")
         self._clear_root()
@@ -174,8 +243,11 @@ class App:
 
         statbar = ttk.Frame(self.root, padding=(10, 4))
         statbar.pack(fill=tk.X)
-        ttk.Label(statbar, text=f"数据加载完成 ({ok_count}/{total} 个端点成功)",
-                  foreground="gray").pack(side=tk.LEFT)
+        status_text = f"数据加载完成 ({ok_count}/{total} 个端点成功)"
+        if failed:
+            names = ", ".join(k for k, _ in failed)
+            status_text += f"  |  失败: {names}"
+        ttk.Label(statbar, text=status_text, foreground="gray").pack(side=tk.LEFT)
 
         self._populate_tabs()
 
@@ -245,22 +317,45 @@ class App:
             self._show_nodata(frame)
             return
 
+        sde = self.sde
+
         text = tk.Text(frame, wrap=tk.WORD, font=("Microsoft YaHei", 10), padx=10, pady=10)
         text.pack(expand=True, fill=tk.BOTH)
 
         def w(s):
             text.insert(tk.END, s + "\n")
 
+        def name_or(sde_fn, obj_id):
+            if sde and obj_id:
+                n = sde_fn(obj_id)
+                return n if n else str(obj_id)
+            return str(obj_id) if obj_id else "N/A"
+
         w(f"角色名: {info.get('name', 'N/A')}")
         w(f"Character ID: {cid}")
         w(f"生日: {info.get('birthday', 'N/A')}")
         w(f"安全等级: {info.get('security_status', 'N/A')}")
         w(f"性别: {info.get('gender', 'N/A')}")
-        w(f"种族ID: {info.get('race_id', 'N/A')}")
-        w(f"血统ID: {info.get('bloodline_id', 'N/A')}")
-        w(f"军团ID: {info.get('corporation_id', 'N/A')}")
-        w(f"联盟ID: {info.get('alliance_id', 'N/A')}")
-        w(f"派系ID: {info.get('faction_id', 'N/A')}")
+
+        race_id = info.get('race_id')
+        bloodline_id = info.get('bloodline_id')
+        corp_id = info.get('corporation_id')
+        alliance_id = info.get('alliance_id')
+        faction_id = info.get('faction_id')
+
+        if sde:
+            w(f"种族: {name_or(sde.race_name, race_id)} (ID: {race_id})")
+            w(f"血统: {name_or(sde.bloodline_name, bloodline_id)} (ID: {bloodline_id})")
+            w(f"军团: {name_or(sde.corp_name, corp_id)} (ID: {corp_id})")
+            w(f"联盟: {name_or(sde.item_name, alliance_id)} (ID: {alliance_id})")
+            w(f"派系: {name_or(sde.faction_name, faction_id)} (ID: {faction_id})")
+        else:
+            w(f"种族ID: {race_id}")
+            w(f"血统ID: {bloodline_id}")
+            w(f"军团ID: {corp_id}")
+            w(f"联盟ID: {alliance_id}")
+            w(f"派系ID: {faction_id}")
+
         desc = info.get('description', '')
         if desc:
             w(f"描述: {desc}")
@@ -283,18 +378,32 @@ class App:
         if corp_hist:
             w("[军团历史]")
             for entry in corp_hist[:10]:
-                w(f"  军团ID {entry.get('corporation_id')}  开始: {entry.get('start_date')}  记录ID: {entry.get('record_id')}")
+                cid_val = entry.get('corporation_id')
+                corp_label = f"{name_or(sde.corp_name, cid_val)} (ID: {cid_val})" if sde else f"军团ID {cid_val}"
+                w(f"  {corp_label}  开始: {entry.get('start_date')}  记录ID: {entry.get('record_id')}")
             w("")
 
         if standings:
             w("[声望]")
-            for s in standings[:20]:
-                w(f"  {s.get('from_type', '')} {s.get('from_id')} → 值: {s.get('standing')}")
+            for s_item in standings[:20]:
+                from_type = s_item.get('from_type', '')
+                from_id = s_item.get('from_id')
+                if sde:
+                    if from_type == 'npc_corp':
+                        label = name_or(sde.corp_name, from_id)
+                    elif from_type == 'faction':
+                        label = name_or(sde.faction_name, from_id)
+                    else:
+                        label = str(from_id)
+                    w(f"  {from_type} {label} → 值: {s_item.get('standing')}")
+                else:
+                    w(f"  {from_type} {from_id} → 值: {s_item.get('standing')}")
             w("")
 
         if fw:
             w("[势力战争]")
-            w(f"  派系ID: {fw.get('faction_id', 'N/A')}")
+            fw_faction = fw.get('faction_id', 'N/A')
+            w(f"  派系: {name_or(sde.faction_name, fw_faction)} (ID: {fw_faction})" if sde else f"  派系ID: {fw_faction}")
             w(f"  加入日期: {fw.get('enlisted_on', 'N/A')}")
             vp = fw.get("victory_points", {}) or {}
             w(f"  上周战绩: {vp.get('last_week', 'N/A')} | 总计: {vp.get('total', 'N/A')} | 昨日: {vp.get('yesterday', 'N/A')}")
@@ -303,7 +412,12 @@ class App:
         if loyalty:
             w("[忠诚点数]")
             for lp in loyalty[:20]:
-                w(f"  军团ID {lp.get('corporation_id')}: {lp.get('loyalty_points')} LP")
+                lcid = lp.get('corporation_id')
+                if sde:
+                    corp_label = name_or(sde.corp_name, lcid)
+                    w(f"  {corp_label} (ID: {lcid}): {lp.get('loyalty_points')} LP")
+                else:
+                    w(f"  军团ID {lcid}: {lp.get('loyalty_points')} LP")
             w("")
 
         text.config(state=tk.DISABLED)
@@ -316,6 +430,7 @@ class App:
         attrs = d.get("attributes")
         skills = d.get("skills")
         queue = d.get("skillqueue")
+        sde = self.sde
 
         if attrs:
             info = ttk.Frame(frame)
@@ -332,19 +447,24 @@ class App:
         f1 = ttk.LabelFrame(paned, text="已训练技能")
         paned.add(f1, weight=1)
         if skills and skills.get("skills"):
-            tree = self._make_tree(f1, ["技能ID", "技能等级", "技能点数"], [140, 80, 100], height=8)
+            tree = self._make_tree(f1, ["技能ID", "技能名称", "技能等级", "技能点数"], [80, 200, 80, 100], height=8)
             for s in skills["skills"]:
-                tree.insert("", tk.END, values=(s["skill_id"], s["trained_skill_level"], s.get("active_skill_level", "")))
+                sid = s["skill_id"]
+                sname = sde.type_name(sid) if sde else ""
+                tree.insert("", tk.END, values=(sid, sname or "", s["trained_skill_level"], s.get("active_skill_level", "")))
         else:
             ttk.Label(f1, text="无数据", foreground="gray").pack(expand=True)
 
         f2 = ttk.LabelFrame(paned, text="技能训练队列")
         paned.add(f2, weight=1)
         if queue:
-            tree = self._make_tree(f2, ["技能ID", "目标等级", "开始时间", "结束时间", "位置"], [140, 70, 130, 130, 50], height=6)
+            tree = self._make_tree(f2, ["技能ID", "技能名称", "目标等级", "开始时间", "结束时间", "位置"],
+                                   [80, 180, 70, 130, 130, 50], height=6)
             for q in queue[:20]:
+                qid = q.get("skill_id")
+                qname = sde.type_name(qid) if sde else ""
                 tree.insert("", tk.END, values=(
-                    q.get("skill_id"), q.get("finished_level"),
+                    qid, qname or "", q.get("finished_level"),
                     q.get("start_date", ""), q.get("finish_date", ""),
                     q.get("queue_position")))
         else:
@@ -381,13 +501,16 @@ class App:
         f2 = ttk.LabelFrame(paned, text="市场交易")
         paned.add(f2, weight=1)
         if transactions:
-            tree = self._make_tree(f2, ["日期", "数量", "单价", "交易类型", "物品ID"], [130, 60, 100, 70, 100], height=8)
+            sde = self.sde
+            tree = self._make_tree(f2, ["日期", "数量", "单价", "交易类型", "物品ID", "物品名称"], [130, 60, 100, 70, 80, 180], height=8)
             for t in transactions[:50]:
+                tid = t.get("type_id")
+                tname = sde.type_name(tid) if sde else ""
                 tree.insert("", tk.END, values=(
                     t.get("date"), t.get("quantity"),
                     f"{t.get('unit_price', 0):,.2f}",
                     "买入" if t.get("is_buy") else "卖出",
-                    t.get("type_id")))
+                    tid, tname or ""))
         else:
             ttk.Label(f2, text="无数据", foreground="gray").pack(expand=True)
 
@@ -400,11 +523,17 @@ class App:
         if not assets:
             self._show_nodata(frame)
             return
-        tree = self._make_tree(frame, ["物品ID", "位置ID", "类型ID", "数量", "位置标识", "蓝图?"], [120, 120, 100, 60, 150, 60], height=20)
+        sde = self.sde
+        tree = self._make_tree(frame, ["物品ID", "物品名称", "位置ID", "类型ID", "数量", "位置标识", "蓝图?"], [100, 200, 100, 80, 60, 120, 50], height=20)
         for a in assets[:200]:
+            tid = a.get("type_id")
+            fid = a.get("location_flag")
+            tname = sde.type_name(tid) if sde else ""
+            fname = sde.flag_name(fid) if sde else ""
+            flag_text = f"{fname} ({fid})" if fname else fid
             tree.insert("", tk.END, values=(
-                a.get("item_id"), a.get("location_id"), a.get("type_id"),
-                a.get("quantity"), a.get("location_flag"),
+                a.get("item_id"), tname or "", a.get("location_id"), tid,
+                a.get("quantity"), flag_text,
                 "是" if a.get("is_blueprint_copy") else ""))
 
     # ── Tab 5: 舰船 ────────────────────────────────────────────
@@ -415,25 +544,41 @@ class App:
         ship = d.get("ship")
         location = d.get("location")
         fittings = d.get("fittings")
+        sde = self.sde
 
         if ship or location:
             text = tk.Text(frame, height=4, font=("Microsoft YaHei", 10), padx=10, pady=6)
             text.pack(fill=tk.X)
             if ship:
-                text.insert(tk.END, f"当前舰船: type_id={ship.get('ship_type_id')}, name={ship.get('ship_name')}\n")
+                stid = ship.get('ship_type_id')
+                sname = sde.type_name(stid) if sde else ""
+                text.insert(tk.END, f"当前舰船: {sname} (type_id={stid}), name={ship.get('ship_name')}\n")
             if location:
-                text.insert(tk.END, f"当前位置: solar_system_id={location.get('solar_system_id')}, "
-                                    f"station_id={location.get('station_id')}, "
-                                    f"structure_id={location.get('structure_id')}\n")
+                ssid = location.get('solar_system_id')
+                ssname = sde.system_name(ssid) if sde else ""
+                staid = location.get('station_id')
+                staname = sde.station_name(staid) if sde else ""
+                stuid = location.get('structure_id')
+                stuname = sde.item_name(stuid) if sde else ""
+                parts = []
+                if ssid:
+                    parts.append(f"星系: {ssname} (ID={ssid})" if ssname else f"solar_system_id={ssid}")
+                if staid:
+                    parts.append(f"空间站: {staname} (ID={staid})" if staname else f"station_id={staid}")
+                if stuid:
+                    parts.append(f"建筑: {stuname} (ID={stuid})" if stuname else f"structure_id={stuid}")
+                text.insert(tk.END, f"当前位置: {' | '.join(parts)}\n")
             text.config(state=tk.DISABLED)
 
         if not fittings:
             ttk.Label(frame, text="装配方案: 无数据", foreground="gray").pack(expand=True)
             return
-        tree = self._make_tree(frame, ["装配ID", "名称", "舰船类型ID", "装备数"], [120, 200, 120, 60], height=15)
+        tree = self._make_tree(frame, ["装配ID", "名称", "舰船类型ID", "舰船名称", "装备数"], [100, 180, 100, 180, 60], height=15)
         for fit in fittings[:50]:
+            ftid = fit.get("ship_type_id")
+            ftname = sde.type_name(ftid) if sde else ""
             items = fit.get("items", [])
-            tree.insert("", tk.END, values=(fit.get("fitting_id"), fit.get("name"), fit.get("ship_type_id"), len(items)))
+            tree.insert("", tk.END, values=(fit.get("fitting_id"), fit.get("name"), ftid, ftname or "", len(items)))
 
     # ── Tab 6: 克隆 ────────────────────────────────────────────
 
@@ -457,10 +602,12 @@ class App:
             text.config(state=tk.DISABLED)
 
         if implants:
-            tree = self._make_tree(frame, ["植入体 type_id"], [150], height=10)
+            sde = self.sde
+            tree = self._make_tree(frame, ["植入体 type_id", "名称"], [120, 250], height=10)
             for imp in implants:
                 val = imp if isinstance(imp, int) else imp.get("type_id", imp)
-                tree.insert("", tk.END, values=(val,))
+                name = sde.type_name(val) if sde else ""
+                tree.insert("", tk.END, values=(val, name or ""))
             tree.pack(expand=True, fill=tk.BOTH)
 
         if not clones and not implants:
@@ -508,6 +655,7 @@ class App:
         orders = d.get("orders")
         jobs = d.get("industry_jobs")
         mining = d.get("mining")
+        sde = self.sde
 
         paned = ttk.PanedWindow(frame, orient=tk.VERTICAL)
         paned.pack(expand=True, fill=tk.BOTH)
@@ -515,10 +663,12 @@ class App:
         f1 = ttk.LabelFrame(paned, text="市场订单")
         paned.add(f1, weight=1)
         if orders:
-            tree = self._make_tree(f1, ["订单ID", "类型ID", "总量", "单价", "剩余", "买入?", "位置ID"], [100, 100, 50, 100, 50, 50, 100], height=6)
+            tree = self._make_tree(f1, ["订单ID", "类型ID", "物品名称", "总量", "单价", "剩余", "买入?", "位置ID"], [80, 70, 180, 50, 90, 50, 50, 80], height=6)
             for o in orders[:50]:
+                tid = o.get("type_id")
+                tname = sde.type_name(tid) if sde else ""
                 tree.insert("", tk.END, values=(
-                    o.get("order_id"), o.get("type_id"), o.get("volume_total"),
+                    o.get("order_id"), tid, tname or "", o.get("volume_total"),
                     f"{o.get('price', 0):,.2f}", o.get("volume_remain"),
                     "买入" if o.get("is_buy_order") else "卖出", o.get("location_id")))
         else:
@@ -527,10 +677,12 @@ class App:
         f2 = ttk.LabelFrame(paned, text="工业任务")
         paned.add(f2, weight=1)
         if jobs:
-            tree = self._make_tree(f2, ["任务ID", "蓝图ID", "活动", "状态", "开始", "结束"], [100, 100, 70, 70, 130, 130], height=6)
+            tree = self._make_tree(f2, ["任务ID", "蓝图ID", "蓝图名称", "活动", "状态", "开始", "结束"], [80, 80, 180, 60, 60, 120, 120], height=6)
             for j in jobs[:50]:
+                bid = j.get("blueprint_id")
+                bname = sde.type_name(bid) if sde else ""
                 tree.insert("", tk.END, values=(
-                    j.get("job_id"), j.get("blueprint_id"), j.get("activity_type"),
+                    j.get("job_id"), bid, bname or "", j.get("activity_type"),
                     j.get("status"), j.get("start_date"), j.get("end_date")))
         else:
             ttk.Label(f2, text="无数据", foreground="gray").pack(expand=True)
@@ -538,10 +690,13 @@ class App:
         f3 = ttk.LabelFrame(paned, text="采矿记录")
         paned.add(f3, weight=1)
         if mining:
-            tree = self._make_tree(f3, ["日期", "太阳系ID", "类型ID", "数量"], [130, 100, 100, 60], height=6)
+            tree = self._make_tree(f3, ["日期", "太阳系ID", "星系名称", "类型ID", "物品名称", "数量"], [120, 80, 180, 70, 180, 50], height=6)
             for m in mining[:50]:
-                tree.insert("", tk.END, values=(m.get("date"), m.get("solar_system_id"),
-                                                 m.get("type_id"), m.get("quantity")))
+                ssid = m.get("solar_system_id")
+                ssname = sde.system_name(ssid) if sde else ""
+                tid = m.get("type_id")
+                tname = sde.type_name(tid) if sde else ""
+                tree.insert("", tk.END, values=(m.get("date"), ssid, ssname or "", tid, tname or "", m.get("quantity")))
         else:
             ttk.Label(f3, text="无数据", foreground="gray").pack(expand=True)
 
@@ -552,6 +707,7 @@ class App:
         self._clear_frame(frame)
         contracts = d.get("contracts")
         blueprints = d.get("blueprints")
+        sde = self.sde
 
         paned = ttk.PanedWindow(frame, orient=tk.VERTICAL)
         paned.pack(expand=True, fill=tk.BOTH)
@@ -560,7 +716,7 @@ class App:
         paned.add(f1, weight=1)
         if contracts:
             tree = self._make_tree(f1, ["合同ID", "类型", "状态", "发起军团?", "接受者ID", "价格", "位置ID"],
-                                   [90, 70, 70, 70, 80, 100, 100], height=8)
+                                   [80, 60, 60, 60, 70, 90, 90], height=8)
             for c in contracts[:50]:
                 tree.insert("", tk.END, values=(
                     c.get("contract_id"), c.get("type"), c.get("status"),
@@ -573,11 +729,13 @@ class App:
         f2 = ttk.LabelFrame(paned, text="蓝图")
         paned.add(f2, weight=1)
         if blueprints:
-            tree = self._make_tree(f2, ["物品ID", "类型ID", "位置ID", "材料效率", "时间效率", "流程数"],
-                                   [100, 100, 100, 80, 80, 60], height=8)
+            tree = self._make_tree(f2, ["物品ID", "类型ID", "蓝图名称", "位置ID", "材料效率", "时间效率", "流程数"],
+                                   [90, 80, 200, 90, 70, 70, 60], height=8)
             for b in blueprints[:50]:
+                tid = b.get("type_id")
+                tname = sde.type_name(tid) if sde else ""
                 tree.insert("", tk.END, values=(
-                    b.get("item_id"), b.get("type_id"), b.get("location_id"),
+                    b.get("item_id"), tid, tname or "", b.get("location_id"),
                     b.get("material_efficiency"), b.get("time_efficiency"), b.get("runs")))
         else:
             ttk.Label(f2, text="无数据", foreground="gray").pack(expand=True)
@@ -591,13 +749,15 @@ class App:
         if not kms:
             self._show_nodata(frame)
             return
-        tree = self._make_tree(frame, ["击杀ID", "击杀船ID", "击杀船名称", "总价值"], [120, 120, 120, 100], height=20)
+        sde = self.sde
+        tree = self._make_tree(frame, ["击杀ID", "击杀船ID", "舰船名称", "总价值"], [110, 100, 220, 100], height=20)
         for km in kms[:50]:
             victim = km.get("victim", {}) or {}
+            stid = victim.get("ship_type_id")
+            stname = sde.type_name(stid) if sde else ""
             zkb = km.get("zkb", {}) or {}
             tree.insert("", tk.END, values=(
-                km.get("killmail_id"), victim.get("ship_type_id"),
-                victim.get("ship_name", ""),
+                km.get("killmail_id"), stid, stname or "",
                 f"{zkb.get('totalValue', 0):,.2f}"))
 
     # ── Tab 11: 联系人 ─────────────────────────────────────────
@@ -667,11 +827,16 @@ class App:
         f4 = ttk.LabelFrame(paned, text="行星开发")
         paned.add(f4, weight=1)
         if planets:
-            tree = self._make_tree(f4, ["行星ID", "太阳系ID", "类型ID", "升级等级", "安装数量"],
-                                   [100, 100, 100, 80, 80], height=4)
+            sde = self.sde
+            tree = self._make_tree(f4, ["行星ID", "太阳系ID", "星系名称", "类型ID", "行星类型", "升级等级", "安装数量"],
+                                   [80, 80, 180, 70, 180, 70, 70], height=4)
             for p in planets[:20]:
+                ssid = p.get("solar_system_id")
+                ssname = sde.system_name(ssid) if sde else ""
+                ptid = p.get("planet_type")
+                ptname = sde.type_name(ptid) if sde else ""
                 tree.insert("", tk.END, values=(
-                    p.get("planet_id"), p.get("solar_system_id"), p.get("planet_type"),
+                    p.get("planet_id"), ssid, ssname or "", ptid, ptname or "",
                     p.get("upgrade_level"), p.get("num_pins")))
         else:
             ttk.Label(f4, text="无数据", foreground="gray").pack(expand=True)
