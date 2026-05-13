@@ -28,21 +28,44 @@ NEEDED_TABLES = [
     "invNames",
 ]
 
+DOWNLOAD_TIMEOUT = 600  # 10 minutes for ~130MB download
+
+# Column name mapping: (id_col, name_col) for each Fuzzwork table
+# Fuzzwork uses camelCase or PascalCase column names
+TABLE_COLUMNS = {
+    "invTypes": ("typeID", "typeName"),
+    "invGroups": ("groupID", "groupName"),
+    "invCategories": ("categoryID", "categoryName"),
+    "mapSolarSystems": ("solarSystemID", "solarSystemName"),
+    "mapConstellations": ("constellationID", "constellationName"),
+    "mapRegions": ("regionID", "regionName"),
+    "staStations": ("stationID", "stationName"),
+    "chrFactions": ("factionID", "factionName"),
+    "chrBloodlines": ("bloodlineID", "bloodlineName"),
+    "chrRaces": ("raceID", "raceName"),
+    "crpNPCCorporations": ("corporationID", "corporationName"),
+    "invFlags": ("flagID", "flagName"),
+    "invNames": ("itemID", "itemName"),
+}
+
 CACHE_SIZE = 20000
 
 
-def _app_dir():
-    """Directory where the script/exe lives — DB and temp files go here."""
-    import sys
-
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
+def _data_dir():
+    """User-writable directory for the SDE database.
+    Uses %APPDATA%/Python_AI on Windows, ~/.python_ai elsewhere."""
+    if os.name == "nt":
+        base = os.environ.get("APPDATA", os.path.expanduser("~"))
+    else:
+        base = os.path.expanduser("~")
+    path = os.path.join(base, "Python_AI")
+    os.makedirs(path, exist_ok=True)
+    return path
 
 
 class SDE:
     def __init__(self, db_path=None):
-        self.db_path = db_path or os.path.join(_app_dir(), DB_NAME)
+        self.db_path = db_path or os.path.join(_data_dir(), DB_NAME)
         self._conn = None
         self._lock = threading.Lock()
         self._cache = {}
@@ -108,11 +131,11 @@ class SDE:
     def download_and_build(self, progress_callback=None):
         """Download the full SDE SQLite, extract needed tables, clean up.
 
-        progress_callback(stage, pct) where stage is 'download'|'extract'|'index'.
+        progress_callback(stage, pct) where stage is 'download'|'extract'|'index'|'error'.
         """
-        app_dir = _app_dir()
-        bz2_path = os.path.join(app_dir, "sde_temp.sqlite.bz2")
-        sqlite_path = os.path.join(app_dir, "sde_temp.sqlite")
+        data_dir = _data_dir()
+        bz2_path = os.path.join(data_dir, "sde_temp.sqlite.bz2")
+        sqlite_path = os.path.join(data_dir, "sde_temp.sqlite")
 
         try:
             # 1. Download
@@ -198,7 +221,7 @@ class SDE:
             raise
 
     def _download(self, dest, progress_callback):
-        resp = requests.get(SDE_URL, stream=True, timeout=120)
+        resp = requests.get(SDE_URL, stream=True, timeout=DOWNLOAD_TIMEOUT)
         resp.raise_for_status()
         total = int(resp.headers.get("Content-Length", 0))
         downloaded = 0
@@ -310,7 +333,7 @@ class SDE:
         return self._lookup("chrRaces", "raceID", "raceName", race_id)
 
     def corp_name(self, corp_id):
-        return self._lookup("crpNPCCorporations", "corporationID", "corporationName", corp_id)
+        return self._lookup("invNames", "itemID", "itemName", corp_id)
 
     def flag_name(self, flag_id):
         return self._lookup("invFlags", "flagID", "flagName", flag_id)

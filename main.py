@@ -103,6 +103,9 @@ class App:
                 "extract": f"提取表... ({pct:.0f}%)",
                 "done": "完成",
             }
+            if stage == "error":
+                stage_label.config(text=f"错误: {pct}", foreground="red")
+                return
             stage_label.config(text=stage_texts.get(stage, f"{stage}... ({pct:.0f}%)"))
             progress["value"] = pct
             if stage == "done":
@@ -115,8 +118,12 @@ class App:
                 self.root.after(0, lambda: self.sde_status_label.config(
                     text="SDE: 就绪", foreground="green"))
             except Exception as e:
+                import traceback
+                err_msg = str(e)[:80]
+                with open("sde_error.log", "w", encoding="utf-8") as f:
+                    f.write(traceback.format_exc())
                 self.root.after(0, lambda: self.sde_status_label.config(
-                    text=f"SDE: 下载失败，重启重试", foreground="red"))
+                    text=f"SDE: 下载失败 ({err_msg})", foreground="red"))
                 self.root.after(0, win.destroy)
 
         threading.Thread(target=_download, daemon=True).start()
