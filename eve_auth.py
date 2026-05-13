@@ -44,6 +44,7 @@ ALL_SCOPES = [
     "esi-characters.read_titles.v1",
     "esi-calendar.read_calendar_events.v1",
     "esi-characters.read_fatigue.v1",
+    "esi-planets.manage_planets.v1",
 ]
 
 ESI_BASE = "https://esi.evetech.net/latest"

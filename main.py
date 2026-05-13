@@ -104,10 +104,13 @@ class App:
                 "done": "完成",
             }
             if stage == "error":
-                stage_label.config(text=f"错误: {pct}", foreground="red")
+                self.root.after(0, lambda: stage_label.config(
+                    text=f"错误: {pct}", foreground="red"))
                 return
-            stage_label.config(text=stage_texts.get(stage, f"{stage}... ({pct:.0f}%)"))
-            progress["value"] = pct
+            self.root.after(0, lambda: (
+                stage_label.config(text=stage_texts.get(stage, f"{stage}... ({pct:.0f}%)")),
+                progress.configure(value=pct),
+            ))
             if stage == "done":
                 self.root.after(0, win.destroy)
 
