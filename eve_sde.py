@@ -204,7 +204,8 @@ class SDE:
                 (datetime.now(timezone.utc).isoformat(),),
             )
             self.conn.commit()
-            self.conn.execute("PRAGMA optimize; VACUUM;")
+            self.conn.execute("PRAGMA optimize")
+            self.conn.execute("VACUUM")
             self._report(progress_callback, "done", 100)
 
         except Exception:
