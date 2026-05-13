@@ -109,7 +109,7 @@ class App:
             stage_label.config(text=stage_texts.get(stage, f"{stage}... ({pct:.0f}%)"))
             progress["value"] = pct
             if stage == "done":
-                win.destroy()
+                self.root.after(0, win.destroy)
 
         def _download():
             try:
